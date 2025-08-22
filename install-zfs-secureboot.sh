@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-echo "=== ZFS SecureBoot Installation Script (Debian Keys Edition) ==="
+echo "=== ZFS SecureBoot Installation Script ==="
 
 # Check if running as root
 if [[ $EUID -ne 0 ]]; then
@@ -9,33 +9,38 @@ if [[ $EUID -ne 0 ]]; then
    exit 1
 fi
 
-# Get script directory (where the repo was cloned)
+# Get script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Check SecureBoot status
-echo "SecureBoot status: $(mokutil --sb-state)"
+echo "SecureBoot: $(mokutil --sb-state 2>/dev/null || echo "Not available")"
 echo "Current kernel: $(uname -r)"
 
-# Verify helper scripts exist
-if [[ ! -f "$SCRIPT_DIR/zfs-kernel-update.sh" ]] || \
-   [[ ! -f "$SCRIPT_DIR/verify-zfs.sh" ]]; then
+# Verify DKMS MOK is properly set up
+if [[ ! -f "/var/lib/dkms/mok.key" ]] || [[ ! -f "/var/lib/dkms/mok.der" ]]; then
     echo ""
-    echo "❌ Error: Helper scripts not found in $SCRIPT_DIR"
-    echo "Please ensure all scripts are in the repository"
+    echo "❌ Error: DKMS MOK keys not found"
+    echo "Please run prepare-zfs-install.sh first"
     exit 1
 fi
 
-# Create symlinks for helper scripts
-echo "=== Creating helper script symlinks ==="
-ln -sf "$SCRIPT_DIR/zfs-kernel-update.sh" /usr/local/bin/zfs-kernel-update
-ln -sf "$SCRIPT_DIR/verify-zfs.sh" /usr/local/bin/verify-zfs
-chmod +x "$SCRIPT_DIR/zfs-kernel-update.sh"
-chmod +x "$SCRIPT_DIR/verify-zfs.sh"
-echo "✅ Symlinks created in /usr/local/bin"
+# Check if MOK is enrolled
+if ! mokutil --list-enrolled 2>/dev/null | grep -q "DKMS Module Signing"; then
+    echo ""
+    echo "❌ Error: DKMS MOK is not enrolled in UEFI"
+    echo "Please reboot and enroll the MOK first"
+    exit 1
+fi
+
+echo ""
+echo "✅ Prerequisites verified:"
+echo "  • DKMS MOK keys installed"
+echo "  • MOK enrolled in UEFI"
+echo "  • Repository: $SCRIPT_DIR"
 
 # Function to wait for apt locks
 wait_for_apt() {
-    local timeout=300  # 5 minutes maximum
+    local timeout=300
     local elapsed=0
     
     echo "Checking if apt is in use..."
@@ -59,134 +64,68 @@ wait_for_apt() {
 }
 
 echo ""
-echo "=== Step 1: Checking for Debian signing infrastructure ==="
+echo "=== Step 1: Installing ZFS packages ==="
 
-# Check if Debian's automatic signing is available
-SIGNING_METHOD=""
-
-# Option 1: Check for Debian's DKMS signing setup
-if [[ -f "/etc/dkms/sign_helper.sh" ]] || [[ -f "/etc/dkms/framework.conf.d/signing.conf" ]]; then
-    echo "✅ Debian DKMS automatic signing detected"
-    SIGNING_METHOD="debian_auto"
-    
-# Option 2: Check if running signed kernel (Debian infrastructure exists)
-elif mokutil --list-enrolled 2>/dev/null | grep -q "Debian Secure Boot CA"; then
-    echo "ℹ️ Debian Secure Boot CA is enrolled"
-    echo "📝 Setting up DKMS to use Debian signing..."
-    
-    # Install necessary packages for module signing
-    apt-get update
-    apt-get install -y sbsigntool
-    
-    # Create Debian-compatible DKMS signing configuration
-    mkdir -p /etc/dkms/framework.conf.d/
-    cat > /etc/dkms/framework.conf.d/signing.conf << 'EOF'
-# Use Debian's module signing infrastructure
-sign_tool="/etc/dkms/sign_helper.sh"
-EOF
-    
-    # Create sign helper that uses Debian's infrastructure
-    cat > /etc/dkms/sign_helper.sh << 'EOF'
-#!/bin/bash
-# DKMS sign helper for Debian
-# This is a placeholder - Debian's actual signing happens during package build
-# For local builds, we'll skip signing and rely on MOK if needed
-exit 0
-EOF
-    chmod +x /etc/dkms/sign_helper.sh
-    
-    SIGNING_METHOD="debian_mok"
-    echo "⚠️ Note: DKMS modules may need manual signing or MOK enrollment"
-    
-else
-    echo "⚠️ No Debian signing infrastructure detected"
-    echo "📝 Will use unsigned modules (may require disabling SecureBoot)"
-    SIGNING_METHOD="unsigned"
-fi
-
-# Store configuration
-echo "$SIGNING_METHOD" > /etc/zfs-signing-method
-
-echo ""
-echo "=== Step 2: Installing ZFS packages ==="
-
-# Clean any corrupted modules first
-if [[ -d "/lib/modules/$(uname -r)/updates/dkms" ]]; then
-    echo "Cleaning any existing DKMS modules..."
-    rm -f /lib/modules/$(uname -r)/updates/dkms/zfs.ko*
-    rm -f /lib/modules/$(uname -r)/updates/dkms/spl.ko*
-fi
-
-# Wait for apt to be available before installing
 if wait_for_apt; then
     apt update
-    
-    # For Debian, prefer the pre-built signed modules if available
-    if apt-cache show zfs-modules-$(uname -r) &>/dev/null; then
-        echo "📦 Installing pre-built ZFS modules..."
-        apt install -y zfs-modules-$(uname -r) zfsutils-linux zfs-zed
-    else
-        echo "📦 Installing ZFS with DKMS..."
-        apt install -y linux-headers-$(uname -r) zfsutils-linux zfs-dkms zfs-zed
-    fi
-    
-    apt install -y smartmontools
+    apt install -y linux-headers-$(uname -r) zfsutils-linux zfs-dkms zfs-zed
 else
     echo "Error: Could not acquire apt lock"
     exit 1
 fi
 
 echo ""
-echo "=== Step 3: Verifying module installation ==="
+echo "=== Step 2: Verifying DKMS build ==="
+dkms status zfs
 
-# Check module status
-if [[ -f "/lib/modules/$(uname -r)/updates/dkms/zfs.ko.xz" ]] || \
-   [[ -f "/lib/modules/$(uname -r)/updates/dkms/zfs.ko" ]] || \
-   [[ -f "/lib/modules/$(uname -r)/kernel/zfs/zfs.ko" ]]; then
-    echo "✅ ZFS modules found"
-else
-    echo "⚠️ ZFS modules not found, checking DKMS..."
-    dkms status zfs
-    
-    # If DKMS has it but not installed, force install
-    ZFS_VER=$(dkms status zfs 2>/dev/null | head -1 | cut -d',' -f1 | cut -d'/' -f2 || echo "")
-    if [[ -n "$ZFS_VER" ]]; then
-        echo "Building with DKMS..."
-        dkms build zfs/$ZFS_VER -k $(uname -r) || true
-        dkms install zfs/$ZFS_VER -k $(uname -r) || true
-    fi
+# Get ZFS version
+ZFS_VER=$(dkms status zfs | head -1 | cut -d',' -f1 | cut -d'/' -f2 || echo "")
+
+if [[ -z "$ZFS_VER" ]]; then
+    echo "❌ Error: ZFS not found in DKMS"
+    exit 1
 fi
+
+# Check if modules were built for current kernel
+if ! dkms status zfs/$ZFS_VER -k $(uname -r) | grep -q "installed"; then
+    echo "Building ZFS modules for current kernel..."
+    dkms build zfs/$ZFS_VER -k $(uname -r)
+    dkms install zfs/$ZFS_VER -k $(uname -r)
+fi
+
+echo ""
+echo "=== Step 3: Verifying module signatures ==="
+
+# Check if modules are properly signed
+MODDIR="/lib/modules/$(uname -r)/updates/dkms"
+
+for module in spl zfs; do
+    if [[ -f "${MODDIR}/${module}.ko.xz" ]]; then
+        echo -n "Checking ${module}.ko.xz... "
+        if xz -dc "${MODDIR}/${module}.ko.xz" 2>/dev/null | tail -c 1000000 | strings | grep -q "DKMS module signing key"; then
+            echo "✔ Signed with DKMS MOK"
+        else
+            echo "⚠️ Not properly signed, rebuilding..."
+            # Force rebuild with signing
+            dkms remove zfs/$ZFS_VER -k $(uname -r)
+            dkms build zfs/$ZFS_VER -k $(uname -r)
+            dkms install zfs/$ZFS_VER -k $(uname -r)
+            break
+        fi
+    fi
+done
 
 echo ""
 echo "=== Step 4: Loading ZFS modules ==="
 
-# Try to load modules
 if modprobe zfs 2>/dev/null; then
-    echo "✅ ZFS modules loaded successfully"
-else
-    echo "⚠️ Failed to load ZFS modules"
-    echo "Checking kernel messages..."
-    dmesg | tail -5
-    
-    if [[ "$SIGNING_METHOD" == "unsigned" ]]; then
-        echo ""
-        echo "❗ SecureBoot may be preventing module loading"
-        echo "Options:"
-        echo "1. Disable SecureBoot in UEFI"
-        echo "2. Sign modules manually with MOK"
-        echo "3. Use Debian's pre-built signed modules"
-    fi
-    
-    # Try to load anyway for systems with SecureBoot disabled
-    modprobe zfs 2>/dev/null || true
-fi
-
-# Check if loaded
-if lsmod | grep -q "^zfs"; then
-    echo "✅ ZFS modules are loaded:"
+    echo "✅ ZFS modules loaded successfully!"
     lsmod | grep -E "spl|zfs"
 else
-    echo "⚠️ ZFS modules are not loaded but installation continues..."
+    echo "❌ Failed to load ZFS modules"
+    echo "Checking dmesg for errors..."
+    dmesg | tail -5
+    exit 1
 fi
 
 echo ""
@@ -206,84 +145,43 @@ echo ""
 echo "=== Step 6: Creating APT hook for automatic kernel updates ==="
 cat > /etc/apt/apt.conf.d/99-zfs-kernel-update << 'APT_HOOK_EOF'
 # APT Hook for auto-preparing ZFS after kernel updates
-# Runs the script in background with a delay to avoid lock conflicts
 DPkg::Post-Invoke { "if [ -x /usr/local/bin/zfs-kernel-update ] && [ ! -f /var/run/zfs-kernel-update.lock ]; then (sleep 5; /usr/local/bin/zfs-kernel-update >> /var/log/zfs-kernel-update.log 2>&1) & fi"; };
 APT_HOOK_EOF
 
-echo "✅ APT hook created: /etc/apt/apt.conf.d/99-zfs-kernel-update"
+echo "✅ APT hook created"
 
 echo ""
 echo "=== Step 7: Testing ZFS functionality ==="
 
-if which zfs &>/dev/null; then
-    echo "ZFS tools are installed"
-    if zfs version &>/dev/null; then
-        echo "ZFS version: $(zfs version | head -1)"
-    fi
+if zfs version >/dev/null 2>&1; then
+    echo "ZFS version: $(zfs version | head -1)"
 fi
 
-# Check if ZFS is working
-if zfs list &>/dev/null; then
+if zpool list >/dev/null 2>&1; then
     echo "✅ ZFS is working correctly"
 else
-    echo "ℹ️ ZFS command available but no pools configured yet"
+    echo "✅ ZFS is ready (no pools configured yet)"
 fi
 
 echo ""
 echo "=== Step 8: Running verification ==="
-/usr/local/bin/verify-zfs || true
+/usr/local/bin/verify-zfs
 
 echo ""
-echo "🎉 INSTALLATION COMPLETED! 🎉"
+echo "🎉 INSTALLATION COMPLETED SUCCESSFULLY! 🎉"
 echo ""
 echo "✅ FEATURES ENABLED:"
-echo "  • ZFS packages: Installed"
-
-case "$SIGNING_METHOD" in
-    "debian_auto")
-        echo "  • Signing: Using Debian automatic signing"
-        ;;
-    "debian_mok")
-        echo "  • Signing: Using Debian infrastructure (may need MOK)"
-        ;;
-    "unsigned")
-        echo "  • Signing: Modules unsigned (disable SecureBoot if needed)"
-        ;;
-esac
-
-echo "  • Auto-loading: ZFS will load on boot"
-echo "  • APT hook: ZFS auto-prepared after upgrades"
-echo "  • ZFS services: Auto-start enabled"
+echo "  • ZFS modules: Loaded and signed with DKMS MOK"
+echo "  • SecureBoot: Fully compatible"
+echo "  • Auto-loading: Enabled at boot"
+echo "  • APT hook: Auto-updates for new kernels"
+echo "  • ZFS services: Enabled"
 echo ""
-
-if ! lsmod | grep -q "^zfs"; then
-    echo "⚠️ IMPORTANT: ZFS modules are not currently loaded"
-    echo "   This might be due to SecureBoot. Options:"
-    echo "   1. Reboot and check if modules load automatically"
-    echo "   2. Disable SecureBoot in UEFI settings"
-    echo "   3. Install Debian's pre-signed ZFS modules package"
-    echo ""
-fi
-
 echo "📝 LOG FILES:"
-echo "  APT hook activity: /var/log/zfs-kernel-update.log"
-echo "  Check logs: tail -f /var/log/zfs-kernel-update.log"
+echo "  /var/log/zfs-kernel-update.log"
 echo ""
-echo "🔧 AVAILABLE COMMANDS:"
-echo "  verify-zfs                - Verify ZFS status"
-echo "  zfs-kernel-update         - Prepare modules for all kernels"
+echo "🔧 COMMANDS:"
+echo "  verify-zfs         - Check ZFS status"
+echo "  zfs-kernel-update  - Update modules for all kernels"
 echo ""
-echo "🎯 QUICK TEST:"
-echo "  zfs version                   - Check ZFS version"
-echo "  lsmod | grep zfs              - Verify modules loaded"
-echo "  systemctl status zfs.target   - Check ZFS services"
-echo "  zpool create test /dev/sdX    - Create test pool (replace sdX)"
-echo ""
-echo "📂 Repository location: $SCRIPT_DIR"
-echo ""
-
-if [[ "$SIGNING_METHOD" == "debian_auto" ]]; then
-    echo "ZFS is now ready for use with SecureBoot! 🔒"
-else
-    echo "ZFS is installed. Check SecureBoot settings if modules don't load. 🔧"
-fi
+echo "ZFS is ready for use with SecureBoot! 🔒"
