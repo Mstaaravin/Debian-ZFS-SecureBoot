@@ -102,7 +102,7 @@ MODDIR="/lib/modules/$(uname -r)/updates/dkms"
 for module in spl zfs; do
     if [[ -f "${MODDIR}/${module}.ko.xz" ]]; then
         echo -n "Checking ${module}.ko.xz... "
-        if xz -dc "${MODDIR}/${module}.ko.xz" 2>/dev/null | tail -c 1000000 | strings | grep -q "DKMS module signing key"; then
+        if xz -dc "${MODDIR}/${module}.ko.xz" 2>/dev/null | tail -c 1000000 | strings | grep -iq "dkms.*signing"; then
             echo "✔ Signed with DKMS MOK"
         else
             echo "⚠️ Not properly signed, rebuilding..."
