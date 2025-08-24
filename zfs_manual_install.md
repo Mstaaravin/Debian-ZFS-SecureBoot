@@ -1,5 +1,8 @@
 # Manual ZFS Installation with SecureBoot on Debian
 
+> [!NOTE]
+> You can watch a video (in Spanish) where this manual process is carried out step by step at: [https://www.youtube.com/watch?v=CgL36_it1cI)](https://www.youtube.com/watch?v=CgL36_it1cI)
+
 ## Table of Contents
 
 1. [Verify initial system status](#step-1-verify-initial-system-status)

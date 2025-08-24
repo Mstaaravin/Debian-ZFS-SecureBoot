@@ -72,9 +72,6 @@ ln -sf "$SCRIPT_DIR/verify-zfs.sh" /usr/local/bin/verify-zfs
 
 echo "✔ Created symlinks in /usr/local/bin/"
 
-# Store the repo path
-echo "$SCRIPT_DIR" > /etc/zfs-secureboot-repo-path
-
 echo ""
 echo "=== Step 3: Installing required packages ==="
 

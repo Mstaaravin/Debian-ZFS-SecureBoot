@@ -2,6 +2,9 @@
 
 Automated scripts for installing and maintaining ZFS on Debian with SecureBoot enabled.
 
+> [!NOTE]
+> You can watch a video (in Spanish) where this manual process is carried out step by step at: [https://www.youtube.com/watch?v=CgL36_it1cI)](https://www.youtube.com/watch?v=CgL36_it1cI)
+
 ## Table of Contents
 
 - [Prerequisites](#prerequisites)
@@ -22,8 +25,8 @@ Automated scripts for installing and maintaining ZFS on Debian with SecureBoot e
 
 ### 1. Clone the repository
 ```bash
-git clone https://github.com/yourusername/zfs-secureboot-debian.git
-cd zfs-secureboot-debian
+git clone https://github.com/Mstaaravin/Debian-ZFS-SecureBoot
+cd Debian-ZFS-SecureBoot
 ```
 
 ### 2. Prepare the system
@@ -73,10 +76,6 @@ That's it! ZFS is now installed and will automatically update when new kernels a
    - Creates `/usr/local/bin/zfs-kernel-update` → `./zfs-kernel-update.sh`
    - Creates `/usr/local/bin/verify-zfs` → `./verify-zfs.sh`
    - Purpose: Makes scripts globally accessible
-
-4. **Repository Path Storage**
-   - Creates `/etc/zfs-secureboot-repo-path`
-   - Purpose: Stores location of the cloned repository
 
 #### `install-zfs-secureboot.sh` creates:
 
