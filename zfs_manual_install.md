@@ -1,5 +1,22 @@
 # Manual ZFS Installation with SecureBoot on Debian
 
+## Table of Contents
+
+1. [Verify initial system status](#step-1-verify-initial-system-status)
+2. [Install required packages](#step-2-install-required-packages)
+3. [Configure MOK keys for DKMS](#step-3-configure-mok-keys-for-dkms)
+4. [Configure DKMS for automatic signing](#step-4-configure-dkms-for-automatic-signing)
+5. [Import MOK key to UEFI](#step-5-import-mok-key-to-uefi)
+6. [Verify MOK is enrolled](#step-6-verify-mok-is-enrolled-after-reboot)
+7. [Install ZFS](#step-7-install-zfs)
+8. [Load ZFS modules](#step-8-load-zfs-modules)
+9. [Final verification](#step-9-final-verification)
+10. [Rebuild ZFS module after apt upgrade](#step-10-rebuild-zfs-module-after-apt-upgrade)
+11. [Verify module signatures](#step-11-verify-module-signatures) (Optional)
+12. [Useful verification commands](#useful-verification-commands)
+13. [Common troubleshooting](#common-troubleshooting)
+
+
 ## Step 1: Verify initial system status
 
 ```bash
@@ -10,7 +27,7 @@ mokutil --sb-state
 uname -r
 ```
 
-## Step 2: Install required packages
+## Step 2: Add contrib non-free to souces.list and install required packages
 
 ```bash
 # Add contrib non-free to /etc/apt/sources.list
@@ -34,7 +51,7 @@ mkdir -p /var/lib/dkms
 # Generate private key
 openssl req -new -x509 -newkey rsa:2048 -keyout /var/lib/dkms/mok.key \
     -outform DER -out /var/lib/dkms/mok.der -nodes -days 36500 \
-    -subj "/CN=DKMS Custom"
+    -subj "/CN=My DKMS Custom"
 
 # Set proper permissions
 chmod 600 /var/lib/dkms/mok.key
@@ -101,28 +118,52 @@ apt update
 apt install -y linux-headers-$(uname -r) zfsutils-linux zfs-dkms zfs-zed
 ```
 
-## Step 8: Verify DKMS build
+## Step 8: Load ZFS modules
 
 ```bash
-# Load zfs module
+# Load ZFS module
 modprobe zfs
 
-# Check DKMS status
-dkms status zfs
+# Verify it loaded correctly
+lsmod | grep -E "spl|zfs"
 
-# Get ZFS version
-ZFS_VER=$(dkms status zfs | head -1 | cut -d',' -f1 | cut -d'/' -f2)
-echo "ZFS Version: $ZFS_VER"
-
-# Check if built for current kernel
-dkms status zfs/$ZFS_VER -k $(uname -r)
-
-# If not built, build it manually
-dkms build zfs/$ZFS_VER -k $(uname -r)
-dkms install zfs/$ZFS_VER -k $(uname -r)
+# If there are errors, check dmesg
+dmesg | tail -10
 ```
 
-## Step 9: Verify module signatures
+## Step 9: Final verification
+
+```bash
+# Check ZFS version
+zfs version
+
+# Check that zpool works
+zpool list
+
+# Check module status
+lsmod | grep zfs
+
+# Check services
+systemctl status zfs.target
+```
+
+## Step 10: Rebuild ZFS module after apt upgrade
+
+**Important Note**: DKMS does not automatically detect self-signed modules with our MOK. After a dist-upgrade that installs a new kernel, you need to reinstall the kernel headers and rebuild the ZFS modules manually.
+
+```bash
+# install new kernel-headers
+apt install -y build-essential linux-headers-$(uname -r)
+
+# Rebuild and install modules
+dkms build zfs/$(dkms status zfs | head -1 | cut -d',' -f1 | cut -d'/' -f2) -k $(uname -r)
+dkms install zfs/$(dkms status zfs | head -1 | cut -d',' -f1 | cut -d'/' -f2) -k $(uname -r)
+
+# Load zfs module to running kernel
+modprobe zfs
+```
+
+## Step 11: Verify module signatures
 
 ```bash
 # Module directory
@@ -139,78 +180,6 @@ if [[ -f "${MODDIR}/zfs.ko.xz" ]]; then
 fi
 ```
 
-## Step 10: Load ZFS modules
-
-```bash
-# Load ZFS module
-modprobe zfs
-
-# Verify it loaded correctly
-lsmod | grep -E "spl|zfs"
-
-# If there are errors, check dmesg
-dmesg | tail -10
-```
-
-## Step 11: Configure automatic startup
-
-```bash
-# Enable automatic module loading
-echo "zfs" > /etc/modules-load.d/zfs.conf
-
-# Enable ZFS services
-systemctl enable zfs-import-cache
-systemctl enable zfs-mount
-systemctl enable zfs.target
-```
-
-## Step 12: Configure APT hook (optional)
-
-```bash
-# Create automatic update script
-cat > /usr/local/bin/zfs-kernel-update << 'EOF'
-#!/bin/bash
-set -e
-
-CURRENT_KERNEL=$(uname -r)
-ZFS_VER=$(dkms status zfs | head -1 | cut -d',' -f1 | cut -d'/' -f2 2>/dev/null || echo "")
-
-if [[ -n "$ZFS_VER" ]]; then
-    for kernel in $(ls /lib/modules/ | grep -E "^[0-9]+\.[0-9]+\.[0-9]+"); do
-        if [[ -d "/usr/src/linux-headers-$kernel" ]]; then
-            if ! dkms status zfs/$ZFS_VER -k $kernel | grep -q "installed"; then
-                echo "Building ZFS for kernel $kernel..."
-                dkms build zfs/$ZFS_VER -k $kernel
-                dkms install zfs/$ZFS_VER -k $kernel
-            fi
-        fi
-    done
-fi
-EOF
-
-chmod +x /usr/local/bin/zfs-kernel-update
-
-# Create APT hook
-cat > /etc/apt/apt.conf.d/99-zfs-kernel-update << 'EOF'
-DPkg::Post-Invoke { "if [ -x /usr/local/bin/zfs-kernel-update ]; then /usr/local/bin/zfs-kernel-update >> /var/log/zfs-kernel-update.log 2>&1 || true; fi"; };
-EOF
-```
-
-## Step 13: Final verification
-
-```bash
-# Check ZFS version
-zfs version
-
-# Check that zpool works
-zpool list
-
-# Check module status
-lsmod | grep zfs
-
-# Check services
-systemctl status zfs.target
-```
 
 ## Useful verification commands
 
