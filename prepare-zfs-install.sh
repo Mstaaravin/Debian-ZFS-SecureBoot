@@ -9,6 +9,13 @@ if [[ $EUID -ne 0 ]]; then
    exit 1
 fi
 
+# Add contrib non-free to /etc/apt/sources.list
+echo ""
+echo "Add contrib non-free to /etc/apt/sources.list"
+sed -i 's/main non-free-firmware/main contrib non-free non-free-firmware/g' /etc/apt/sources.list
+
+
+
 # Get script directory (where the repo was cloned)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
