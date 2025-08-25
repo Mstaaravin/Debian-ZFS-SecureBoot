@@ -3,7 +3,8 @@
 Automated scripts for installing and maintaining ZFS on Debian with SecureBoot enabled.
 
 > [!NOTE]
-> You can watch a video (in Spanish) where this manual process is carried out step by step at: [https://www.youtube.com/watch?v=CgL36_it1cI)](https://www.youtube.com/watch?v=CgL36_it1cI)
+> You can watch a video (in Spanish) where this manual process is carried out step by step at:
+> [https://www.youtube.com/watch?v=YTqCiP2f83I)](https://www.youtube.com/watch?v=YTqCiP2f83I)
 
 ## Table of Contents
 
